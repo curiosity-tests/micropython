@@ -1,6 +1,40 @@
 name: unix port
 
+# racecar fork-testbed patch. Changes from upstream:
+#   1. workflow_dispatch with a `leg` input so racecar can drive the run and pick
+#      baseline vs instrumented.
+#   2. actions/checkout -> crashappsec/action-checkout, which wraps checkout and
+#      setup-chalk-action; `chalk:` is the only variable separating the arms.
+#   3. permissions: id-token: write for the action's OIDC connect (the block
+#      zeroes unlisted scopes, so everything upstream relied on is restated).
+#   4. A fail-closed assertion on the instrumented arm.
+#   5. fail-fast: false on every matrix -- a measurement-integrity change, not a
+#      build change: the instrumented arm has strictly more failure surface, so
+#      leaving fail-fast on cancels instrumented siblings more often than
+#      baseline ones and biases the comparison.
+#   6. the concurrency group carries the leg. Both arms run on the same ref, so
+#      upstream's github.ref-keyed group put them in one group and the second
+#      dispatch cancelled the first. Also cancellation-only, never a build change.
+# Build and test COMMANDS are unchanged from upstream.
+
+run-name: "unix port ${{ inputs.leg || 'push' }} ${{ inputs.racecar_run }}"
+
 on:
+  workflow_dispatch:
+    inputs:
+      leg:
+        description: "baseline (uninstrumented) or instrumented (under chalk/curiosity)"
+        type: choice
+        options: [instrumented, baseline]
+        default: instrumented
+      profile:
+        description: "CrashOverride chalk profile"
+        type: string
+        default: curiosity-tests-racecar
+      racecar_run:
+        description: "racecar correlation token, echoed into the run name"
+        type: string
+        default: ""
   push:
   pull_request:
     paths:
@@ -16,14 +50,36 @@ on:
       - 'tests/**'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.leg || 'push' }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  CHALK_ON: ${{ github.event_name == 'workflow_dispatch' && inputs.leg != 'baseline' }}
 
 jobs:
   minimal:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - name: Build
       run: tools/ci.sh unix_minimal_build
     - name: Run main test suite
@@ -35,7 +91,22 @@ jobs:
   reproducible:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - name: Build with reproducible date
       run: tools/ci.sh unix_minimal_build
       env:
@@ -46,7 +117,22 @@ jobs:
   standard:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - name: Build
       run: tools/ci.sh unix_standard_build
     - name: Run main test suite
@@ -58,7 +144,22 @@ jobs:
   standard_v2:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - name: Build
       run: tools/ci.sh unix_standard_v2_build
     - name: Run main test suite
@@ -70,7 +171,22 @@ jobs:
   standard_error_terse:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - name: Build
       run: tools/ci.sh unix_standard_error_terse_build
     - name: Run main test suite
@@ -82,7 +198,22 @@ jobs:
   standard_error_none:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - name: Build
       run: tools/ci.sh unix_standard_error_none_build
     - name: Run main test suite
@@ -94,7 +225,22 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - uses: actions/setup-python@v7
       # Python 3.12 is the default for ubuntu-24.04, but that has compatibility issues with settrace tests.
       # Can remove this step when ubuntu-latest uses a more recent Python 3.x as the default.
@@ -135,7 +281,22 @@ jobs:
   coverage_32bit:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - uses: actions/setup-python@v7
       # Python 3.12 is the default for ubuntu-24.04, but that has compatibility issues with settrace tests.
       # Can remove this step when ubuntu-latest uses a more recent Python 3.x as the default.
@@ -172,7 +333,22 @@ jobs:
   nanbox:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - uses: actions/setup-python@v7
       # Python 3.12 is the default for ubuntu-24.04, but that has compatibility issues with settrace tests.
       # Can remove this step when ubuntu-latest uses a more recent Python 3.x as the default.
@@ -191,7 +367,22 @@ jobs:
   longlong:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - uses: actions/setup-python@v7
       # Python 3.12 is the default for ubuntu-24.04, but that has compatibility issues with settrace tests.
       # Can remove this step when ubuntu-latest uses a more recent Python 3.x as the default.
@@ -210,7 +401,22 @@ jobs:
   float:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - name: Build
       run: tools/ci.sh unix_float_build
     - name: Run main test suite
@@ -222,7 +428,22 @@ jobs:
   gil_enabled:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - name: Build
       run: tools/ci.sh unix_gil_enabled_build
     - name: Run main test suite
@@ -234,7 +455,22 @@ jobs:
   stackless_clang:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - name: Install packages
       run: tools/ci.sh unix_clang_setup
     - name: Build
@@ -248,7 +484,22 @@ jobs:
   float_clang:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - name: Install packages
       run: tools/ci.sh unix_clang_setup
     - name: Build
@@ -266,7 +517,22 @@ jobs:
   settrace_stackless:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - uses: actions/setup-python@v7
       # Python 3.12 is the default for ubuntu-24.04, but that has compatibility issues with settrace tests.
       # Can remove this step when ubuntu-latest uses a more recent Python 3.x as the default.
@@ -283,7 +549,22 @@ jobs:
   repr_b:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - uses: actions/setup-python@v7
       # Python 3.12 is the default for ubuntu-24.04, but that has compatibility issues with settrace tests.
       # Can remove this step when ubuntu-latest uses a more recent Python 3.x as the default.
@@ -300,9 +581,26 @@ jobs:
       run: tests/run-tests.py --print-failures
 
   macos:
+    # racecar: non-Linux leg: observables are linux-only
+    if: false
     runs-on: macos-26
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - uses: actions/setup-python@v7
       with:
         python-version: '3.8'
@@ -317,7 +615,22 @@ jobs:
   qemu_mips:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - uses: actions/setup-python@v7
       # Python 3.12 is the default for ubuntu-24.04, but that has compatibility issues with settrace tests.
       # Can remove this step when ubuntu-latest uses a more recent Python 3.x as the default.
@@ -336,7 +649,22 @@ jobs:
   qemu_arm:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - uses: actions/setup-python@v7
       # Python 3.12 is the default for ubuntu-24.04, but that has compatibility issues with settrace tests.
       # Can remove this step when ubuntu-latest uses a more recent Python 3.x as the default.
@@ -355,7 +683,22 @@ jobs:
   qemu_riscv64:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - uses: actions/setup-python@v7
       # Python 3.12 is the default for ubuntu-24.04, but that has compatibility issues with settrace tests.
       # Can remove this step when ubuntu-latest uses a more recent Python 3.x as the default.
@@ -374,7 +717,22 @@ jobs:
   qemu_loong64:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - uses: actions/setup-python@v7
       # Python 3.12 is the default for ubuntu-24.04, but that has compatibility issues with settrace tests.
       # Can remove this step when ubuntu-latest uses a more recent Python 3.x as the default.
@@ -393,7 +751,22 @@ jobs:
   qemu_x64:
     runs-on: ubuntu-24.04-arm
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - uses: actions/setup-python@v7
       # Python 3.12 is the default for ubuntu-24.04, but that has compatibility issues with settrace tests.
       # Can remove this step when ubuntu-latest uses a more recent Python 3.x as the default.
@@ -412,7 +785,22 @@ jobs:
   sanitize_address:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - uses: actions/setup-python@v7
       # Python 3.12 is the default for ubuntu-24.04, but that has compatibility issues with settrace tests.
       # Can remove this step when ubuntu-latest uses a more recent Python 3.x as the default.
@@ -437,7 +825,22 @@ jobs:
   sanitize_undefined:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+
+    - name: Assert instrumentation is live
+      # Socket existence, not LD_PRELOAD: co-monitor's loader clears
+      # LD_PRELOAD once it has injected, so an empty value is what success
+      # looks like. co-hostd also daemonizes, so pgrep does not match it.
+      if: env.CHALK_ON == 'true'
+      run: |
+        test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
+        test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+
     - uses: actions/setup-python@v7
       # Python 3.12 is the default for ubuntu-24.04, but that has compatibility issues with settrace tests.
       # Can remove this step when ubuntu-latest uses a more recent Python 3.x as the default.
