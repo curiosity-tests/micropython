@@ -58,7 +58,7 @@ permissions:
   id-token: write
 
 env:
-  CHALK_ON: ${{ github.event_name == 'workflow_dispatch' && inputs.leg != 'baseline' }}
+  CHALK_ON: ${{ inputs.leg == 'instrumented' }}
 
 jobs:
   minimal:
@@ -267,7 +267,7 @@ jobs:
       with:
         # Only fail the job on error if a token is set, or we're running against upstream repo.
         # This avoids the annoying situation of the job failing on every push to a fork (if no token is set).
-        fail_ci_if_error: ${{ secrets.CODECOV_TOKEN != '' || github.repository_owner == 'micropython' }}
+        fail_ci_if_error: ${{ secrets.CODECOV_TOKEN != '' || github.repository_owner == 'curiosity-tests' }}
         verbose: true
         flags: unix-coverage-64bit
         name: unix-coverage-64bit
@@ -320,7 +320,7 @@ jobs:
       uses: codecov/codecov-action@v7
       with:
         # See corresponding comment above.
-        fail_ci_if_error: ${{ secrets.CODECOV_TOKEN != '' || github.repository_owner == 'micropython' }}
+        fail_ci_if_error: ${{ secrets.CODECOV_TOKEN != '' || github.repository_owner == 'curiosity-tests' }}
         verbose: true
         flags: unix-coverage-32bit
         name: unix-coverage-32bit
